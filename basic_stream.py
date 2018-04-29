@@ -1,40 +1,6 @@
-import ray
+import threading
 import numpy as np
 import time
-import threading
-
-class Benchmark(object):
-	""" A simple benchmark class to do some trivial benchmarking. """
-	def __init__(self, func):
-		self.func = func
-
-	def __call__(self, *args):
-		start = time.time()
-		self.func(*args)
-		print("Time elapsed: {0}".format(time.time() - start))
-
-@ray.remote
-class RayPublisher(object):
-
-    """
-    Takes a input stream and publish the data onto ray server
-    """
-
-    def __init__(self, config=""):
-        if config:
-            self._init_with_config(config)
-
-        self.source = create_test_stream()
-
-
-
-    def _init_with_config(self):
-        pass
-
-    def publish(self):
-        while self.source.isAvailable():
-            ray.put(self.source.pop(0))
-
 
 class InputStream(object):
     """
