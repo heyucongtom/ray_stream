@@ -1,5 +1,6 @@
 import ray
 import numpy as np
+from basic_stream import *
 
 class Benchmark(object):
 	""" A simple benchmark class to do some trivial benchmarking. """
@@ -31,32 +32,11 @@ class Registration(object):
     SUB = 'sub'
     SRV = 'srv'
 
-@ray.remote
-class RayPublisher(object):
-
-    """
-    Takes a input stream and publish the data onto ray server
-    """
-
-    def __init__(self, config=""):
-        if config:
-            self._init_with_config(config)
-
-        self.source = create_test_stream()
-
-
-
-    def _init_with_config(self):
-        pass
-
-    def publish(self):
-        while self.source.isAvailable():
-            ray.put(self.source.pop(0))
-
 class RayTopic(object):
 
     """
     Ros style Minimal implementation of a topic
+    A Publisher/Subscriber is a Topic implementation
     """
 
     def __init__(self, name, data_class, reg_type):
