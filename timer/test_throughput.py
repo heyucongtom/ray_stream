@@ -7,7 +7,21 @@ global_timeit_dict = {}
 
 # put speed. 100mb * 128 = 12.8 GB / 40 s = 300 MB / s
 class Benchmark(object):
-	""" A simple benchmark class to do some trivial benchmarking. """
+	""" A simple benchmark class to do some trivial benchmarking.
+
+    Timer object to record on API level
+      1. serialization overhead
+        - ros: Message(xxx)
+        - ray: rat.put(xxx)
+
+      2. communication overhead,
+         with multiple worker / pipeline stage
+        - ros: publish --> receive
+        - ray: ray.get() initiate --> ray.get() return
+
+      3. (additional) graph initial setup overhead
+        - ros:
+    """
 
 	epoch = 0
 
@@ -129,15 +143,6 @@ def test_communication_overhead_get():
 
 	do_warmup()
 
-	def do_measure_overhead(reuse_rate, num, rand_ids, target_array):
-		dummy = rand_ids[0]
-		tmp_objs = []
-		for i in range(num):
-			if np.random.rand() < reuse_rate:
-				ray.get(dummy)
-			else:
-				target_array += ray.get(rand_ids[i])
-
 	epoch = 0
 	for int_size in int_num:
 		for num in total_nums:
@@ -145,12 +150,12 @@ def test_communication_overhead_get():
 			my_tag = num
 			target_array = np.zeros(int_size)
 			with Benchmark(my_tag):
-				do_measure_overhead(reuse_rate, num, rand_ids, target_array)
+				for i in range(num):
+					target_array += ray.get(rand_ids[i])
 			print(num, int_size)
 			epoch += 1
 
 	speed_dict = calculate_speed(SIZE_MB)
-	print(speed_dict)
 	print(global_timeit_dict)
 
 def test_communication_overhead_put():
@@ -189,7 +194,6 @@ def test_communication_overhead_put():
 			epoch += 1
 
 	speed_dict = calculate_speed(SIZE_MB)
-	print(speed_dict)
 	print(global_timeit_dict)
 
 
@@ -198,5 +202,5 @@ if __name__ == "__main__":
 	print("Testing throughput for put...")
 	# test_put_throughput()
 	# test_get_throughput()
-	test_communication_overhead_get()
-	# test_communication_overhead_put()
+	# test_communication_overhead_get()
+	test_communication_overhead_put()

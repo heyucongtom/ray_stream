@@ -3,16 +3,35 @@ import numpy as np
 import time
 import ray
 import argparse
+from collections import defaultdict
+
+global_timeit_dict = defaultdict(float)
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument("--size-mb", default=10, type=int, help="size of data in MBs")
+parser.add_argument("--size-mb", default=1, type=float, help="size of data in MBs")
 parser.add_argument("--num-mappers", help="number of mapper actors used", type=int, default=3)
 parser.add_argument("--num-reducers", help="num of reducers actor used", type=int, default=1)
 parser.add_argument("--bucket-num", help="bucket size", type=int, default=20)
 
 args = parser.parse_args()
-args_dim = args.size_mb * 250 * 1000
+args_dim = int(args.size_mb * 250 * 1000)
+
+# global_timeit_dict = {}
+
+@ray.remote
+class Timer(object):
+
+    def __init__(self):
+        self.timeit_dict = defaultdict(list)
+
+    def push(self, tag, time):
+        self.timeit_dict[tag].append(time)
+
+    def pull(self):
+        ret = self.timeit_dict.copy()
+        self.timeit_dict.clear()
+        return ret
 
 class InputStream(object):
     """
@@ -96,23 +115,6 @@ def make_infinite_stream():
     return stream
 
 
-class EventTimer(object):
-    """
-    Timer object to record on API level
-      1. serialization overhead
-        - ros: Message(xxx)
-        - ray: rat.put(xxx)
-
-      2. communication overhead,
-         with multiple worker / pipeline stage
-        - ros: publish --> receive
-        - ray: ray.get() initiate --> ray.get() return
-
-      3. (additional) graph initial setup overhead
-        - ros:
-    """
-    pass
-
 @ray.remote
 class TimedMapper(object):
     """
@@ -120,9 +122,10 @@ class TimedMapper(object):
     Mapper to map double value into buckets.
     """
 
-    def __init__(self, stream):
+    def __init__(self, stream, timer):
         self.stream = stream
         self.item_processed = 0
+        self.timer = timer
 
     def get_next_item(self):
         # For benchmarking communication overhead, polling suffice.
@@ -142,26 +145,37 @@ class TimedMapper(object):
         return counts
 
     def do_map(self):
-
+        map_called_time = time.perf_counter()
+        self.timer.push.remote("map_func_called", map_called_time)
         next_item = self.get_next_item()
         return self.map_nums_to_bucket(next_item)
 
 @ray.remote
 class TimedReducer(object):
 
-    def __init__(self, *mappers):
+    def __init__(self, timer, *mappers):
         self.mappers = mappers
+        self.kv_lst_idx = None
+        self.timer = timer
 
     def next_reduce_result(self):
+        reduce_called_time = time.perf_counter()
+        self.timer.push.remote("reduce_func_called", reduce_called_time)
+
         all_lsts = []
         for mapper in self.mappers:
+
+            map_start_time = time.perf_counter()
+            self.timer.push.remote("map_func_start", map_start_time)
+
             kv_lst_idx = mapper.do_map.remote()
             all_lsts.append(kv_lst_idx)
 
         # test 20 buckets
         freq_sum = [0 for i in range(20)]
         for idx in all_lsts:
-            for k, v in enumerate(ray.get(idx)):
+            lst = ray.get(idx)
+            for k, v in enumerate(lst):
                 freq_sum[k] += v
         return freq_sum
 
@@ -184,25 +198,50 @@ def test_stream():
     print(total)
     print("Total time: {0}".format(time.time() - start))
 
+def average_dict(timeit_dict):
+    reduce_start = np.mean(np.asarray(timeit_dict["reduce_func_start"]))
+    reduce_called = np.mean(np.asarray(timeit_dict["reduce_func_called"]))
+    reduce_schedule_time = reduce_called - reduce_start
+
+    map_start = np.mean(np.asarray(timeit_dict["map_func_start"]))
+    map_called = np.mean(np.asarray(timeit_dict["map_func_called"]))
+    map_schedule_time = map_called - map_start
+
+    return reduce_schedule_time, map_schedule_time
+
 if __name__ == "__main__":
     ray.init()
-
-    mappers = [TimedMapper.remote(make_infinite_stream()) for _ in range(args.num_mappers)]
-    reducers = [TimedReducer.remote(*mappers) for _ in range(args.num_reducers)]
+    timer = Timer.remote()
+    mappers = [TimedMapper.remote(make_infinite_stream(), timer) for _ in range(args.num_mappers)]
+    reducers = [TimedReducer.remote(timer, *mappers) for _ in range(args.num_reducers)]
 
     # Notice each reducer are reusing the same data from same mappers
     # In real-life setting we may want to apply different function
     # For benchmarking it suffices.
 
     data_idx = 0
+    reduce_times = []
+    map_times = []
     while True:
 
         data_idx += 1
         print("Summing batch {0}".format(data_idx))
         total_counts = [0 for _ in range(args.bucket_num)]
 
+        reduce_start_time = time.perf_counter()
+        timer.push.remote("reduce_func_start", reduce_start_time)
+
         counts = ray.get([reducer.next_reduce_result.remote() for reducer in reducers])
         for count_lst in counts:
             for i, val in enumerate(count_lst):
                 total_counts[i] += val
         print(total_counts)
+
+        timeit_dict = ray.get(timer.pull.remote())
+        # print(timeit_dict)
+
+        reduce_schedule_time, map_schedule_time = average_dict(timeit_dict)
+        reduce_times.append(reduce_schedule_time)
+        map_times.append(map_schedule_time)
+
+        print(reduce_times, map_times)
