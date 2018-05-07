@@ -33,3 +33,28 @@ def streamFunc2():
 
     res2 = func2(next_image)
     return res2
+
+
+class MutableObj(object):
+
+    def __init__(self):
+        self.data = []
+
+    def add(self, d):
+        self.data.append(d)
+
+@ray.remote
+def remoteFunc(obj, num):
+    obj.add(num)
+    return obj.data
+
+if __name__ == "__main__":
+    ray.init()
+    obj = MutableObj()
+    data = remoteFunc.remote(obj, 0)
+
+    print(ray.get(data))
+    print(obj.data)
+    data2 = remoteFunc.remote(obj, 1)
+    print(obj.data)
+    print(ray.get(data2))

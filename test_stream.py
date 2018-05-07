@@ -9,7 +9,7 @@ global_timeit_dict = defaultdict(float)
 
 parser = argparse.ArgumentParser()
 
-parser.add_argument("--size-mb", default=1, type=float, help="size of data in MBs")
+parser.add_argument("--size-mb", default=1.7, type=float, help="size of data in MBs")
 parser.add_argument("--num-mappers", help="number of mapper actors used", type=int, default=3)
 parser.add_argument("--num-reducers", help="num of reducers actor used", type=int, default=1)
 parser.add_argument("--bucket-num", help="bucket size", type=int, default=20)
@@ -75,7 +75,7 @@ class InfiniteStream(InputStream):
         self.data = [0]
 
     def next(self):
-        return np.random.rand(args_dim)
+        return np.random.rand(int(args_dim * (0.5 + 0.5 * np.random.rand())))
 
 
 def make_test_stream():
@@ -145,8 +145,8 @@ class TimedMapper(object):
         return counts
 
     def do_map(self):
-        map_called_time = time.perf_counter()
-        self.timer.push.remote("map_func_called", map_called_time)
+        # map_called_time = time.perf_counter()
+        # self.timer.push.remote("map_func_called", map_called_time)
         next_item = self.get_next_item()
         return self.map_nums_to_bucket(next_item)
 
@@ -159,14 +159,14 @@ class TimedReducer(object):
         self.timer = timer
 
     def next_reduce_result(self):
-        reduce_called_time = time.perf_counter()
-        self.timer.push.remote("reduce_func_called", reduce_called_time)
+        # reduce_called_time = time.perf_counter()
+        # self.timer.push.remote("reduce_func_called", reduce_called_time)
 
         all_lsts = []
         for mapper in self.mappers:
 
-            map_start_time = time.perf_counter()
-            self.timer.push.remote("map_func_start", map_start_time)
+            # map_start_time = time.perf_counter()
+            # self.timer.push.remote("map_func_start", map_start_time)
 
             kv_lst_idx = mapper.do_map.remote()
             all_lsts.append(kv_lst_idx)
@@ -195,8 +195,8 @@ def test_stream():
             # print("Pop data {0}".format(data_obj))
         # else:
         #     print("Waiting for data...")
-    print(total)
-    print("Total time: {0}".format(time.time() - start))
+    # print(total)
+    # print("Total time: {0}".format(time.time() - start))
 
 def average_dict(timeit_dict):
     reduce_start = np.mean(np.asarray(timeit_dict["reduce_func_start"]))
@@ -222,26 +222,33 @@ if __name__ == "__main__":
     data_idx = 0
     reduce_times = []
     map_times = []
+    total_times = []
     while True:
 
         data_idx += 1
-        print("Summing batch {0}".format(data_idx))
         total_counts = [0 for _ in range(args.bucket_num)]
 
-        reduce_start_time = time.perf_counter()
-        timer.push.remote("reduce_func_start", reduce_start_time)
-
+        # reduce_start_time = time.perf_counter()
+        # timer.push.remote("reduce_func_start", reduce_start_time)
+        start = time.perf_counter()
         counts = ray.get([reducer.next_reduce_result.remote() for reducer in reducers])
+        span = time.perf_counter() - start
+        total_times.append(span)
+
+        print("The time spend summing batch {0} is {1}s".format(data_idx, span))
+
         for count_lst in counts:
             for i, val in enumerate(count_lst):
                 total_counts[i] += val
-        print(total_counts)
 
-        timeit_dict = ray.get(timer.pull.remote())
+        print(total_times)
+        # print(total_counts)
+
+        # timeit_dict = ray.get(timer.pull.remote())
         # print(timeit_dict)
 
-        reduce_schedule_time, map_schedule_time = average_dict(timeit_dict)
-        reduce_times.append(reduce_schedule_time)
-        map_times.append(map_schedule_time)
+        # reduce_schedule_time, map_schedule_time = average_dict(timeit_dict)
+        # reduce_times.append(reduce_schedule_time)
+        # map_times.append(map_schedule_time)
 
-        print(reduce_times, map_times)
+        # print(reduce_times, map_times)
